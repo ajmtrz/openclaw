@@ -20,6 +20,8 @@ export const BUILD = {
 
 export function environment(): WorkerEnvironmentRecord {
   return {
+    preparation: null,
+    lastActivatedAtMs: null,
     environmentId: "environment-1",
     providerId: "device",
     profileId: "device:node-1",
@@ -47,6 +49,9 @@ export function environment(): WorkerEnvironmentRecord {
 
 export function transport(): NodeWorkerSupervisorTransport {
   return {
+    async getCurrentNode(nodeId) {
+      return (await this.listCurrentNodes()).find((node) => node.nodeId === nodeId);
+    },
     hasCurrentRunner: () => true,
     listCurrentNodes: async () => [
       {

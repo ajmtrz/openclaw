@@ -155,6 +155,7 @@ export async function runGatewayLoop(params: {
   /** Grants this run loop authority over the process it exclusively owns. */
   ownsProcessLifecycle?: boolean;
   lockPort?: number;
+  lifecycleLockDeadlineMs?: number;
   healthHost?: string;
   waitForHealthyChild?: (port: number, pid?: number, host?: string) => Promise<boolean>;
   beginBoot?: (startedAtMs: number) => void | Promise<void>;
@@ -187,7 +188,12 @@ export async function runGatewayLoop(params: {
     process.platform,
     { includeLinuxOpenClawGatewayServiceMarker: true },
   );
-  let lock = await acquireGatewayLock({ port: params.lockPort });
+  let lock = await acquireGatewayLock({
+    port: params.lockPort,
+    ...(params.lifecycleLockDeadlineMs !== undefined
+      ? { lifecycleDeadlineMs: params.lifecycleLockDeadlineMs }
+      : {}),
+  });
   // Process-owned signal handling must survive gaps with no listening server.
   // Node's signal listeners and pending promises do not retain the event loop.
   const processLifetime = params.ownsProcessLifecycle ? new MessageChannel() : undefined;
@@ -935,7 +941,10 @@ export async function runGatewayLoop(params: {
           } else {
             params.completeBoot?.(
               isRestart
-                ? { outcome: "planned_restart", reason: "gateway.restart.external" }
+                ? {
+                    outcome: "planned_restart",
+                    reason: acceptedRequest.restartReason ?? "gateway.restart.external",
+                  }
                 : {
                     outcome: shutdownFailed ? "forced_stop" : "clean_stop",
                     reason: shutdownFailed ? "gateway.stop_close_failed" : "gateway.stop",
@@ -1086,8 +1095,10 @@ export async function runGatewayLoop(params: {
     void (async () => {
       const { consumeGatewayRestartIntentPayloadSync } = await loadGatewayLifecycleRuntimeModule();
       const restartIntent = consumeGatewayRestartIntentPayloadSync();
+      // SIGTERM hands replacement to the caller (e.g. systemctl restart).
+      // Drain as a restart, then exit even when in-process respawn is configured.
       request(
-        restartIntent ? "restart" : "stop",
+        restartIntent ? "external-restart" : "stop",
         "SIGTERM",
         restartIntent?.reason,
         restartIntent ?? undefined,
